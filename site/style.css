@@ -121,3 +121,16 @@ input:focus {
   from { transform: scale(0); }
   to { transform: scale(1); }
 }
+
+/* Робимо футер прозорим при відкритій модалці */
+body.modal-is-open .site-footer {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+/* Також додамо гарне розмиття для самої модалки */
+.modal-backdrop {
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.7);
+}
