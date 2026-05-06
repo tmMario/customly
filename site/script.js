@@ -1,3 +1,11 @@
+/* ─────────────────────────────────────────
+   CUSTOMLY — script.js  (optimised)
+   · завжди фото (відео → постер-кадр через canvas)
+   · IntersectionObserver lazy-load
+   · debounce пошуку
+   · кешовані DOM-посилання
+   ───────────────────────────────────────── */
+
 const BOT_TOKEN = "8762540625:AAGhyP5X_4__uRgws9m8piZvia6_av5sQQU";
 const CHAT_ID   = "688063138";
 
