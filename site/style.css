@@ -374,42 +374,78 @@ a { color: var(--gold); text-decoration: none; }
 .form-group input:focus { border-color: var(--gold); }
 .form-group input.error { border-color: var(--red); }
 
-/* Submit button */
+/* --- ОНОВЛЕНА КНОПКА ЗАМОВЛЕННЯ --- */
 .btn-submit {
   width: 100%;
-  padding: 16px;
+  padding: 14px 24px;
   background: var(--ink);
   color: var(--white);
-  border-radius: 10px;
+  border: none;
+  border-radius: 12px; /* Більш м'який радіус */
   font-weight: 600;
-  font-size: .9rem;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-top: 6px;
+  font-size: 1rem;
+  text-transform: none; /* Прибираємо весь капс, так виглядає дорожче */
+  letter-spacing: 0.3px;
+  margin-top: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 54px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
 }
-.btn-submit:active { opacity: .85; }
-@media (hover: hover) {
-  .btn-submit { transition: background var(--t); }
-  .btn-submit:hover { background: var(--gold-dark); }
-}
-.btn-submit:disabled { opacity: .7; pointer-events: none; }
 
-.btn-submit.loading .btn-text { display: none; }
+.btn-submit:hover {
+  background: var(--gold-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(154, 122, 69, 0.2);
+}
+
+.btn-submit:active {
+  transform: translateY(0);
+  opacity: 0.9;
+}
+
+.btn-submit:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Стилі для тексту всередині */
+.btn-text {
+  transition: opacity 0.2s ease;
+}
+
+/* Стан завантаження */
+.btn-submit.loading .btn-text {
+  opacity: 0; /* Текст зникає, але займає місце, щоб кнопка не міняла розмір */
+}
+
+.btn-submit.loading .spinner {
+  display: block;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin-left: -10px;
+  margin-top: -10px;
+}
+
 .spinner {
   display: none;
   width: 20px;
   height: 20px;
-  border: 2.5px solid rgba(255,255,255,.4);
+  border: 2.5px solid rgba(255,255,255,0.3);
   border-top-color: #fff;
   border-radius: 50%;
-  animation: spin .7s linear infinite;
+  animation: spin 0.8s linear infinite;
 }
-.btn-submit.loading .spinner { display: block; }
-@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 /* Success state */
 .modal-success {
