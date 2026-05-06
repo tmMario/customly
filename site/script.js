@@ -306,9 +306,16 @@ function openModal(sku) {
 
   resetModal();
   UI.backdrop.classList.add('open');
+
+  document.body.classList.add('modal-is-open'); // ДОДАЙ ЦЕ
+  UI.backdrop.classList.add('open');
 }
 
-function closeModal() { UI.backdrop.classList.remove('open'); }
+function closeModal() { UI.backdrop.classList.remove('open');  
+  document.body.classList.remove('modal-is-open'); // ДОДАЙ ЦЕ
+  UI.backdrop.classList.remove('open');
+}
+
 function resetModal() {
   document.getElementById('modalForm').style.display = 'block';
   document.getElementById('modalSuccess').classList.remove('show');
