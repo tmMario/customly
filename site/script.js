@@ -1,324 +1,354 @@
-/* ─────────────────────────────────────────
-   CUSTOMLY — script.js (Refactored)
-   ───────────────────────────────────────── */
+const BOT_TOKEN = "8762540625:AAGhyP5X_4__uRgws9m8piZvia6_av5sQQU";
+const CHAT_ID   = "688063138";
 
-// Увага: Токен на фронтенді — це ризик. Рекомендується перенести на сервер.
-const _0x4a = "8762540625:AAGhyP5X_4__uRgws9m8piZvia6_av5sQQU"; 
-const CHAT_ID = "688063138";
-
-let allProducts = [];
+let allProducts  = [];
 let activeProduct = null;
-const thumbCache = {};
 
-// Кеш DOM-елементів
-const UI = {
-  grid: null,
-  noRes: null,
-  count: null,
-  backdrop: null,
-  searchInput: null,
-  submitBtn: null
-};
+/* ── DOM refs (кешуємо один раз) ── */
+let $grid, $noRes, $count, $backdrop;
 
 /* ══════════════════════════════════════════
-   1. ОБРОБКА МЕДІА (ОПТИМІЗОВАНА ЧЕРГА)
+   0.  ВІДЕО → КАДР  (canvas, один раз)
 ══════════════════════════════════════════ */
 
-async function extractThumb(videoUrl, photoFallback) {
-  if (thumbCache[videoUrl]) return thumbCache[videoUrl];
+const thumbCache = {};   // { videoUrl: objectURL }
+
+/**
+ * Витягує перший кадр з відео через <video>+<canvas>.
+ * Повертає ObjectURL PNG (або photoFallback при помилці).
+ */
+function extractThumb(videoUrl, photoFallback) {
+  if (thumbCache[videoUrl]) return Promise.resolve(thumbCache[videoUrl]);
 
   return new Promise(resolve => {
     const vid = document.createElement('video');
-    vid.muted = true;
+    vid.muted      = true;
     vid.playsInline = true;
-    vid.preload = 'metadata';
+    vid.preload    = 'metadata';   // тільки метадані, не весь файл
     vid.crossOrigin = 'anonymous';
 
-    const timeout = setTimeout(() => {
+    const cleanup = () => {
       vid.src = '';
-      resolve(photoFallback);
-    }, 8000);
+      vid.load();
+    };
 
-    vid.onloadeddata = () => { vid.currentTime = 0.5; };
+    vid.onloadeddata = () => {
+      // seekToкадру 0.01 с щоб уникнути чорного першого кадру
+      vid.currentTime = 0.5;
+    };
 
     vid.onseeked = () => {
-      clearTimeout(timeout);
       try {
-        const canvas = document.createElement('canvas');
-        canvas.width = 300;
+        const canvas  = document.createElement('canvas');
+        canvas.width  = 300;
         canvas.height = 400;
-        const ctx = canvas.getContext('2d');
+        const ctx     = canvas.getContext('2d');
         ctx.drawImage(vid, 0, 0, 300, 400);
         canvas.toBlob(blob => {
-          vid.src = '';
+          cleanup();
           if (!blob) { resolve(photoFallback); return; }
           const url = URL.createObjectURL(blob);
           thumbCache[videoUrl] = url;
           resolve(url);
-        }, 'image/jpeg', 0.8);
+        }, 'image/jpeg', 0.82);
       } catch {
+        cleanup();
         resolve(photoFallback);
       }
     };
 
-    vid.onerror = () => { clearTimeout(timeout); resolve(photoFallback); };
+    vid.onerror = () => { cleanup(); resolve(photoFallback); };
+
+    // Таймаут 6 с — якщо відео недоступне
+    const timer = setTimeout(() => { cleanup(); resolve(photoFallback); }, 6000);
+    vid.addEventListener('seeked', () => clearTimeout(timer), { once: true });
+
     vid.src = videoUrl;
+    vid.load();
   });
 }
 
 /* ══════════════════════════════════════════
-   2. ІНІЦІАЛІЗАЦІЯ
+   1. INIT & RENDER
 ══════════════════════════════════════════ */
 
 async function initCatalog() {
-  UI.grid = document.getElementById('productsGrid');
-  UI.noRes = document.getElementById('noResults');
-  UI.count = document.getElementById('resultCount');
-  UI.backdrop = document.getElementById('modalBackdrop');
-  UI.searchInput = document.getElementById('searchInput');
-  UI.submitBtn = document.getElementById('submitBtn');
+  $grid    = document.getElementById('productsGrid');
+  $noRes   = document.getElementById('noResults');
+  $count   = document.getElementById('resultCount');
+  $backdrop = document.getElementById('modalBackdrop');
 
   try {
-    const res = await fetch(`products.json?v=${Date.now()}`);
-    if (!res.ok) throw new Error(`Помилка завантаження: ${res.status}`);
-    
-    const data = await res.json();
-    
-    // Валідація даних
-    allProducts = Array.isArray(data) 
-      ? data.filter(p => p.sku && p.sku !== '-' && p.name) 
-      : [];
+    const res = await fetch('products.json?v=' + Date.now());
+    if (!res.ok) throw new Error('HTTP ' + res.status);
 
-    if (allProducts.length === 0) {
-      showError("Каталог порожній або пошкоджений.");
-      return;
-    }
+    const data = await res.json();
+    allProducts = data.filter(p => p.sku && p.sku.trim() !== '-' && p.name);
+
+    // Пре-обробка: якщо є відео але немає фото — одразу витягуємо кадр (паралельно)
+    const thumbJobs = allProducts
+      .filter(p => p.video && !p.photo)
+      .map(async p => {
+        p.photo = await extractThumb(p.video, '');
+      });
+    // Не чекаємо — рендеримо з тим, що є, кадри підтягнуться
+    Promise.all(thumbJobs).catch(() => {});
 
     renderProducts(allProducts);
   } catch (err) {
-    console.error('Критична помилка:', err);
-    showError("Не вдалося завантажити товари. Будь ласка, оновіть сторінку.");
+    console.error('Каталог:', err);
+    if ($grid) {
+      $grid.innerHTML = `<p style="color:#c00;padding:20px;grid-column:1/-1;text-align:center">
+        Не вдалося завантажити каталог.</p>`;
+    }
   }
 }
 
-function showError(msg) {
-  if (UI.grid) {
-    UI.grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:40px;color:#d94f3b;">${msg}</div>`;
-  }
+/* ── Lazy-load через IntersectionObserver ── */
+let imgObserver;
+function getObserver() {
+  if (imgObserver) return imgObserver;
+  imgObserver = new IntersectionObserver((entries, obs) => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const img = entry.target;
+      if (img.dataset.src) {
+        img.src = img.dataset.src;
+        delete img.dataset.src;
+      }
+      obs.unobserve(img);
+    });
+  }, { rootMargin: '200px' });   // починаємо завантажувати за 200px до появи
+  return imgObserver;
 }
-
-/* ══════════════════════════════════════════
-   3. РЕНДЕР ТА ПОШУК
-══════════════════════════════════════════ */
 
 function renderProducts(list) {
-  if (!UI.grid) return;
-  UI.grid.innerHTML = '';
+  if (!$grid) return;
 
   if (!list.length) {
-    UI.noRes.style.display = 'block';
-    UI.count.textContent = '0 товарів';
+    $grid.innerHTML = '';
+    $noRes.style.display = 'block';
+    if ($count) $count.textContent = '';
     return;
   }
 
-  UI.noRes.style.display = 'none';
-  UI.count.textContent = `${list.length} товарів`;
+  $noRes.style.display = 'none';
+  if ($count) $count.textContent = list.length + ' товарів';
 
-  const fragment = document.createDocumentFragment();
-  const observer = getObserver();
+  const frag = document.createDocumentFragment();
+  const obs  = getObserver();
 
   list.forEach((p, i) => {
-    const card = document.createElement('article');
-    card.className = 'product-card';
-    
-    // Lazy-loading для зображень
-    const isEager = i < 4;
-    const imgHtml = isEager 
-      ? `<img src="${p.photo || ''}" alt="${esc(p.name)}" loading="eager">`
-      : `<img data-src="${p.photo || ''}" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="${esc(p.name)}">`;
+    const article = document.createElement('article');
+    article.className = 'product-card';
+    article.setAttribute('data-sku', p.sku);
 
-    card.innerHTML = `
-      <div class="card-img-wrap">${imgHtml}</div>
+    // Перші 6 карток — eager, решта — lazy
+    const eager   = i < 6;
+    const imgSrc  = p.photo || '';
+    const imgTag  = eager
+      ? `<img src="${imgSrc}" alt="${escHtml(p.name)}" width="300" height="400" decoding="async" fetchpriority="${i < 2 ? 'high' : 'auto'}" />`
+      : `<img data-src="${imgSrc}" alt="${escHtml(p.name)}" width="300" height="400" decoding="async" />`;
+
+    const opt = (cls, val) => val ? `<p class="${cls}">${escHtml(val)}</p>` : '';
+
+    article.innerHTML = `
+      <div class="card-img-wrap">${imgTag}</div>
       <div class="card-body">
-        <p class="card-article">Арт. ${esc(p.sku)}</p>
-        <h3 class="card-name">${esc(p.name)}</h3>
+        <p class="card-article">Арт. ${escHtml(p.sku)}</p>
+        <h3 class="card-name">${escHtml(p.name)}</h3>
+        <h3 class="card-material">${escHtml(p.material)}</h3>
+        <h3 class="card-probe">${escHtml(p.probe)}</h3>
+        <h3 class="card-stones">${escHtml(p.stones)}</h3>
         <div class="card-footer">
           <span class="card-price">${p.price} ₴</span>
-          <button class="btn-buy">Купити</button>
+          <button class="btn-buy" aria-label="Купити ${escHtml(p.name)}">Купити</button>
         </div>
       </div>`;
 
-    // Поступова генерація прев'ю для відео
+    // Якщо є відео але ще немає фото — витягуємо кадр у фоні
     if (p.video && !p.photo) {
       extractThumb(p.video, '').then(url => {
-        const img = card.querySelector('img');
-        if (img) {
+        const img = article.querySelector('img');
+        if (img && url) {
           if (img.dataset.src !== undefined) img.dataset.src = url;
           else img.src = url;
+          p.photo = url;
         }
-        p.photo = url;
       });
     }
 
-    if (!isEager) {
-      const img = card.querySelector('img');
-      if (img) observer.observe(img);
+    // Реєструємо lazy-img в observer
+    if (!eager) {
+      const img = article.querySelector('img');
+      if (img) obs.observe(img);
     }
 
-    card.onclick = () => openModal(p.sku);
-    fragment.appendChild(card);
+    // Один listener на картку (event delegation від article)
+    article.addEventListener('click', e => {
+      const sku = article.dataset.sku;
+      if (e.target.classList.contains('btn-buy') || e.currentTarget === article) {
+        e.stopPropagation();
+        openModal(sku);
+      }
+    });
+
+    frag.appendChild(article);
   });
 
-  UI.grid.appendChild(fragment);
+  $grid.innerHTML = '';
+  $grid.appendChild(frag);
 }
 
-let searchDebounce;
+/* ══════════════════════════════════════════
+   2. SEARCH  (debounced)
+══════════════════════════════════════════ */
+
+let searchTimer;
 function handleSearch() {
-  clearTimeout(searchDebounce);
-  searchDebounce = setTimeout(() => {
-    const q = UI.searchInput.value.trim().toLowerCase();
-    const filtered = allProducts.filter(p => 
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    const q = (document.getElementById('searchInput')?.value || '').trim().toLowerCase();
+    if (!q) { renderProducts(allProducts); return; }
+
+    const filtered = allProducts.filter(p =>
       p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
     );
     renderProducts(filtered);
-  }, 300);
+
+    document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 220);
 }
 
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && document.activeElement?.id === 'searchInput') handleSearch();
+});
+
 /* ══════════════════════════════════════════
-   4. ЗАМОВЛЕННЯ ТА ВАЛІДАЦІЯ
+   3. MODAL — OPEN / CLOSE
 ══════════════════════════════════════════ */
 
-async function processOrder() {
-  const fields = {
-    name: document.getElementById('fName'),
-    phone: document.getElementById('fPhone'),
-    city: document.getElementById('fCity')
-  };
+function openModal(sku) {
+  const p = allProducts.find(item => item.sku === sku);
+  if (!p) return;
+  activeProduct = p;
 
-  let isInvalid = false;
+  // Завжди фото (відео більше не показуємо)
+  const previewWrap = document.getElementById('modalMediaWrap');
+  if (previewWrap) {
+    const photoSrc = p.photo || '';
+    previewWrap.innerHTML = `<img src="${photoSrc}" alt="${escHtml(p.name)}"
+      style="width:100%;height:100%;object-fit:cover;border-radius:6px" decoding="async" />`;
+  }
 
-  // Валідація імені
-  if (fields.name.value.trim().length < 2) { markErr(fields.name); isInvalid = true; }
-  
-  // Валідація телефону (мінімум 10 цифр)
-  const phoneVal = fields.phone.value.replace(/\D/g, '');
-  if (phoneVal.length < 10) { markErr(fields.phone); isInvalid = true; }
-  
-  if (fields.city.value.trim().length < 2) { markErr(fields.city); isInvalid = true; }
+  document.getElementById('modalProductName').textContent    = p.name;
+  document.getElementById('modalProductArticle').textContent = 'Арт. ' + p.sku;
+  document.getElementById('modalProductPrice').textContent   = p.price + ' ₴';
 
-  if (isInvalid) return;
+  resetModal();
 
-  setLoading(true);
+  $backdrop.classList.add('open');
+  document.body.style.overflow = 'hidden';
 
-  const message = [
-    `🛍 <b>НОВЕ ЗАМОВЛЕННЯ</b>`,
-    `Товар: ${activeProduct.name}`,
-    `Арт: <code>${activeProduct.sku}</code>`,
-    `Ціна: ${activeProduct.price} ₴`,
-    `────────────────`,
-    `👤 Ім'я: ${fields.name.value.trim()}`,
-    `📞 Тел: <code>${fields.phone.value.trim()}</code>`,
-    `🏙 Місто: ${fields.city.value.trim()}`
-  ].join('\n');
-
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${_0x4a}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: CHAT_ID, text: message, parse_mode: 'HTML' })
-    });
-
-    if (!response.ok) throw new Error();
-
-    // --- ОНОВЛЕНИЙ БЛОК УСПІХУ ---
-    document.getElementById('modalForm').style.display = 'none';
-    
-    // Вставляємо дані замовлення у вікно успіху
-    const successTitle = document.querySelector('#modalSuccess h3');
-    const successDetails = document.getElementById('successOrderDetails');
-    
-    if (successTitle) successTitle.textContent = "Замовлення прийнято!";
-    
-    if (successDetails) {
-      successDetails.innerHTML = `
-        <div style="margin: 15px 0; padding: 10px; background: #f9f9f9; border-radius: 8px; text-align: left; font-size: 0.9rem;">
-          <p><strong>Товар:</strong> ${activeProduct.name}</p>
-          <p><strong>Артикул:</strong> ${activeProduct.sku}</p>
-          <p><strong>До сплати:</strong> ${activeProduct.price} ₴</p>
-        </div>
-      `;
-    }
-
-    document.getElementById('modalSuccess').classList.add('show');
-    // ----------------------------
-
-  } catch (err) {
-    alert("Помилка відправки. Спробуйте ще раз.");
-  } finally {
-    setLoading(false);
+  if (window.innerWidth >= 600) {
+    setTimeout(() => document.getElementById('fName')?.focus(), 300);
   }
 }
 
-/* ══════════════════════════════════════════
-   5. ДОПОМІЖНІ ФУНКЦІЇ
-══════════════════════════════════════════ */
-
-function setLoading(state) {
-  UI.submitBtn.disabled = state;
-  UI.submitBtn.classList.toggle('loading', state);
+function closeModal() {
+  $backdrop.classList.remove('open');
+  document.body.style.overflow = '';
+  activeProduct = null;
 }
 
-function markErr(el) {
-  el.classList.add('error');
-  el.onclick = () => el.classList.remove('error');
-  el.oninput = () => el.classList.remove('error');
+function handleBackdropClick(e) {
+  if (e.target === $backdrop) closeModal();
 }
 
-function esc(str) {
-  const d = document.createElement('div');
-  d.textContent = str;
-  return d.innerHTML;
-}
-
-function getObserver() {
-  return new IntersectionObserver((entries, obs) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        const img = entry.target;
-        if (img.dataset.src) img.src = img.dataset.src;
-        obs.unobserve(img);
-      }
-    });
-  }, { rootMargin: '100px' });
-}
-
-// Модалка (спрощено для прикладу)
-function openModal(sku) {
-  activeProduct = allProducts.find(p => p.sku === sku);
-  if (!activeProduct) return;
-
-  document.getElementById('modalProductName').textContent = activeProduct.name;
-  document.getElementById('modalProductPrice').textContent = `${activeProduct.price} ₴`;
-  document.getElementById('modalProductArticle').textContent = `Арт. ${activeProduct.sku}`;
-  
-  const preview = document.getElementById('modalMediaWrap');
-  preview.innerHTML = `<img src="${activeProduct.photo || ''}" style="width:100%;height:100%;object-fit:cover;">`;
-
-  resetModal();
-  UI.backdrop.classList.add('open');
-
-  document.body.classList.add('modal-is-open'); // ДОДАЙ ЦЕ
-  UI.backdrop.classList.add('open');
-}
-
-function closeModal() { UI.backdrop.classList.remove('open');  
-  document.body.classList.remove('modal-is-open'); // ДОДАЙ ЦЕ
-  UI.backdrop.classList.remove('open');
-}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 function resetModal() {
-  document.getElementById('modalForm').style.display = 'block';
+  document.getElementById('modalForm').style.display = '';
   document.getElementById('modalSuccess').classList.remove('show');
+  ['fName', 'fPhone', 'fCity'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.value = ''; el.classList.remove('error'); }
+  });
+  const btn = document.getElementById('submitBtn');
+  if (btn) { btn.classList.remove('loading'); btn.disabled = false; }
 }
 
+/* ══════════════════════════════════════════
+   4. ORDER — VALIDATE + TELEGRAM
+══════════════════════════════════════════ */
+
+async function processOrder() {
+  const name  = document.getElementById('fName')?.value.trim()  || '';
+  const phone = document.getElementById('fPhone')?.value.trim() || '';
+  const city  = document.getElementById('fCity')?.value.trim()  || '';
+
+  let hasError = false;
+  if (!name)  { markError('fName');  hasError = true; }
+  if (!phone) { markError('fPhone'); hasError = true; }
+  if (!city)  { markError('fCity');  hasError = true; }
+  if (hasError) return;
+
+  const btn = document.getElementById('submitBtn');
+  btn.classList.add('loading');
+  btn.disabled = true;
+
+  const msg = [
+    '🛍 <b>НОВЕ ЗАМОВЛЕННЯ</b>', '',
+    `📦 Товар:   <b>${activeProduct?.name || '—'}</b>`,
+    `🏷 Артикул: <code>${activeProduct?.sku || '—'}</code>`,
+    `💰 Ціна:    <b>${activeProduct?.price || '—'} ₴</b>`, '',
+    `👤 Ім'я:    ${name}`,
+    `📞 Телефон: ${phone}`,
+    `🏙 Місто:   ${city}`, '',
+    `🕐 ${new Date().toLocaleString('uk-UA')}`
+  ].join('\n');
+
+  try {
+    const ok = await sendToTelegram(msg);
+    if (!ok) throw new Error('Telegram error');
+    document.getElementById('modalForm').style.display = 'none';
+    document.getElementById('modalSuccess').classList.add('show');
+  } catch (err) {
+    console.error(err);
+    alert('Виникла помилка. Зверніться до менеджера: @m2300m');
+    btn.classList.remove('loading');
+    btn.disabled = false;
+  }
+}
+
+async function sendToTelegram(text) {
+  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: CHAT_ID, text, parse_mode: 'HTML' })
+  });
+  if (!res.ok) { console.error(await res.json().catch(() => ({}))); return false; }
+  return true;
+}
+
+function markError(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add('error');
+  el.addEventListener('input', () => el.classList.remove('error'), { once: true });
+}
+
+/* ══════════════════════════════════════════
+   5. HELPERS
+══════════════════════════════════════════ */
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/* ══════════════════════════════════════════
+   6. BOOT
+══════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', initCatalog);
